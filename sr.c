@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "emulator.h"
-#include "gbn.h"
+#include "sr.h"
 
 /* ******************************************************************
    Go Back N protocol.  Adapted from J.F.Kurose
@@ -56,7 +56,6 @@ bool IsCorrupted(struct pkt packet)
 /********* Sender (A) variables and functions ************/
 
 static struct pkt buffer[WINDOWSIZE]; /* array for storing packets waiting for ACK */
-static int windowfirst, windowlast;   /* array indexes of the first/last packet awaiting ACK */
 static int windowcount;               /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;              /* the next sequence number to be used by the sender */
 static bool acked[WINDOWSIZE];        /* whether packet has been ACKed */
