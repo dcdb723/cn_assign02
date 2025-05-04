@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "emulator.h"
-#include "gbn.h"
+#include "sr.h"
 
 /* ******************************************************************
    Go Back N protocol.  Adapted from J.F.Kurose
@@ -55,13 +55,14 @@ bool IsCorrupted(struct pkt packet)
 
 /********* Sender (A) variables and functions ************/
 
+/* State variables for sender */
 static struct pkt buffer[WINDOWSIZE]; /* array for storing packets waiting for ACK */
-static int windowfirst, windowlast;   /* array indexes of the first/last packet awaiting ACK */
-static int windowcount;               /* the number of packets currently awaiting an ACK */
-static int A_nextseqnum;              /* the next sequence number to be used by the sender */
-static bool acked[WINDOWSIZE];        /* whether packet has been ACKed */
+static bool acked[WINDOWSIZE];        /* indicates whether packet has been ACKed */
 static int windowbase;                /* base sequence number of the window */
+static int A_nextseqnum;              /* the next sequence number to be used by the sender */
+static int windowcount;               /* the number of packets currently awaiting an ACK */
 static int oldest_unacked;            /* sequence number of the oldest unacked packet */
+static bool in_window[SEQSPACE];      /* tracks if a sequence number is in the current window */
 
 /* Find the oldest unacknowledged packet to time */
 static void find_oldest_unacked(void)
@@ -74,7 +75,7 @@ static void find_oldest_unacked(void)
   for (i = 0; i < windowcount; i++)
   {
     seq = (windowbase + i) % SEQSPACE;
-    if (!acked[seq % WINDOWSIZE])
+    if (!acked[seq % WINDOWSIZE] && in_window[seq])
     {
       oldest_unacked = seq;
       return;
@@ -103,10 +104,10 @@ void A_output(struct msg message)
     sendpkt.checksum = ComputeChecksum(sendpkt);
 
     /* put packet in window buffer */
-    /* windowlast will always be 0 for alternating bit; but not for GoBackN */
     index = A_nextseqnum % WINDOWSIZE;
     buffer[index] = sendpkt;
     acked[index] = false;
+    in_window[A_nextseqnum] = true;
     windowcount++;
 
     /* send out packet */
@@ -153,11 +154,10 @@ void A_input(struct pkt packet)
         ((windowbase > (windowbase + windowcount - 1) % SEQSPACE) &&
          (packet.acknum >= windowbase || packet.acknum <= (windowbase + windowcount - 1) % SEQSPACE)))
     {
-
       index = packet.acknum % WINDOWSIZE;
 
       /* Only process if not already ACKed */
-      if (!acked[index])
+      if (!acked[index] && in_window[packet.acknum])
       {
         if (TRACE > 0)
           printf("----A: ACK %d is not a duplicate\n", packet.acknum);
@@ -176,14 +176,13 @@ void A_input(struct pkt packet)
           if (oldest_unacked != -1)
           {
             starttimer(A, RTT);
-            /*if (TRACE > 1)
-              printf("----A: Started timer for packet %d\n", oldest_unacked);*/
           }
         }
 
         /* Slide window if base packet is ACKed */
-        while (windowcount > 0 && acked[windowbase % WINDOWSIZE])
+        while (windowcount > 0 && acked[windowbase % WINDOWSIZE] && in_window[windowbase])
         {
+          in_window[windowbase] = false; // Mark as no longer in window
           windowbase = (windowbase + 1) % SEQSPACE;
           windowcount--;
         }
@@ -220,7 +219,7 @@ void A_timerinterrupt(void)
       printf("----A: time out,resend packets!\n");
 
     /* Only resend if still within window and not yet ACKed */
-    if (!acked[index])
+    if (!acked[index] && in_window[oldest_unacked])
     {
       /* resend just this packet */
       if (TRACE > 0)
@@ -257,6 +256,11 @@ void A_init(void)
   for (i = 0; i < WINDOWSIZE; i++)
   {
     acked[i] = false;
+  }
+
+  for (i = 0; i < SEQSPACE; i++)
+  {
+    in_window[i] = false;
   }
 }
 
@@ -352,9 +356,6 @@ void B_input(struct pkt packet)
   /* Compute checksum and send */
   sendpkt.checksum = ComputeChecksum(sendpkt);
   tolayer3(B, sendpkt);
-
-  /*if (TRACE > 0)
-    printf("----B: ACK %d sent\n", sendpkt.acknum);*/
 }
 
 /* the following routine will be called once (only) before any other */
