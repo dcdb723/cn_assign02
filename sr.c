@@ -5,33 +5,29 @@
 #include "sr.h"
 
 /* ******************************************************************
-   Go Back N protocol.  Adapted from J.F.Kurose
-   ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.2
+   Selective Repeat protocol. Adapted from GBN implementation
 
    Network properties:
    - one way network delay averages five time units (longer if there
-   are other messages in the channel for GBN), but can be larger
+   are other messages in the channel for SR), but can be larger
    - packets can be corrupted (either the header or the data portion)
    or lost, according to user-defined probabilities
    - packets will be delivered in the order in which they were sent
    (although some can be lost).
 
-   Modifications:
-   - removed bidirectional GBN code and other code not used by prac.
-   - fixed C style to adhere to current programming style
-   - added GBN implementation
+   Key differences from GBN:
+   - Sender only resends packets that are explicitly timed out
+   - Receiver accepts and buffers out-of-order packets
+   - Single timer used for the oldest unacknowledged packet
+   - Individual ACKs for each packet
 **********************************************************************/
 
-#define RTT 16.0      /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
+#define RTT 16.0      /* round trip time. */
 #define WINDOWSIZE 6  /* the maximum number of buffered unacked packet */
-#define SEQSPACE 7    /* the min sequence space for GBN must be at least windowsize + 1 */
+#define SEQSPACE 12   /* the sequence space for SR must be at least 2*windowsize */
 #define NOTINUSE (-1) /* used to fill header fields that are not being used */
 
-/* generic procedure to compute the checksum of a packet.  Used by both sender and receiver
-   the simulator will overwrite part of your packet with 'z's.  It will not overwrite your
-   original checksum.  This procedure must generate a different checksum to the original if
-   the packet is corrupted.
-*/
+/* generic procedure to compute the checksum of a packet */
 int ComputeChecksum(struct pkt packet)
 {
   int checksum = 0;
@@ -48,28 +44,29 @@ int ComputeChecksum(struct pkt packet)
 bool IsCorrupted(struct pkt packet)
 {
   if (packet.checksum == ComputeChecksum(packet))
-    return (false);
+    return false;
   else
-    return (true);
+    return true;
 }
 
 /********* Sender (A) variables and functions ************/
 
+/* State variables for sender */
 static struct pkt buffer[WINDOWSIZE]; /* array for storing packets waiting for ACK */
-static int windowcount;               /* the number of packets currently awaiting an ACK */
-static int A_nextseqnum;              /* the next sequence number to be used by the sender */
-static bool acked[WINDOWSIZE];        /* whether packet has been ACKed */
+static bool acked[WINDOWSIZE];        /* indicates whether packet has been ACKed */
 static int windowbase;                /* base sequence number of the window */
+static int A_nextseqnum;              /* the next sequence number to be used by the sender */
+static int windowcount;               /* the number of packets currently awaiting an ACK */
 static int oldest_unacked;            /* sequence number of the oldest unacked packet */
 
 /* Find the oldest unacknowledged packet to time */
 static void find_oldest_unacked(void)
 {
-  int i;
   int seq;
+  int i;
   oldest_unacked = -1;
 
-  /* Start from the windowbase and find the first unacked packet */
+  /* Check each sequence number in the current window */
   for (i = 0; i < windowcount; i++)
   {
     seq = (windowbase + i) % SEQSPACE;
@@ -79,6 +76,8 @@ static void find_oldest_unacked(void)
       return;
     }
   }
+
+  /* If all packets are acked */
 }
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
@@ -88,7 +87,7 @@ void A_output(struct msg message)
   int i;
   int index;
 
-  /* if not blocked waiting on ACK */
+  /* if not blocked waiting on full window */
   if (windowcount < WINDOWSIZE)
   {
     if (TRACE > 1)
@@ -102,7 +101,6 @@ void A_output(struct msg message)
     sendpkt.checksum = ComputeChecksum(sendpkt);
 
     /* put packet in window buffer */
-    /* windowlast will always be 0 for alternating bit; but not for GoBackN */
     index = A_nextseqnum % WINDOWSIZE;
     buffer[index] = sendpkt;
     acked[index] = false;
@@ -123,7 +121,7 @@ void A_output(struct msg message)
     /* get next sequence number, wrap back to 0 */
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;
   }
-  /* if blocked,  window is full */
+  /* if blocked, window is full */
   else
   {
     if (TRACE > 0)
@@ -132,9 +130,7 @@ void A_output(struct msg message)
   }
 }
 
-/* called from layer 3, when a packet arrives for layer 4
-   In this practical this will always be an ACK as B never sends data.
-*/
+/* called from layer 3, when a packet arrives for layer 4 */
 void A_input(struct pkt packet)
 {
   int index;
@@ -221,6 +217,7 @@ void A_timerinterrupt(void)
       tolayer3(A, buffer[index]);
       packets_resent++;
 
+      /* restart timer */
       starttimer(A, RTT);
     }
     else
@@ -235,15 +232,15 @@ void A_timerinterrupt(void)
   }
 }
 
-/* the following routine will be called once (only) before any other */
-/* entity A routines are called. You can use it to do any initialization */
+/* initialization function */
 void A_init(void)
 {
-  /* initialise A's window, buffer and sequence number */
   int i;
-  A_nextseqnum = 0; /* A starts with seq num 0, do not change this */
-  windowcount = 0;
+
+  /* Initialize sender variables */
   windowbase = 0;
+  A_nextseqnum = 0;
+  windowcount = 0;
   oldest_unacked = -1;
 
   for (i = 0; i < WINDOWSIZE; i++)
@@ -252,16 +249,16 @@ void A_init(void)
   }
 }
 
-/********* Receiver (B)  variables and procedures ************/
+/********* Receiver (B) variables and functions ************/
 
-static int expectedseqnum;                 /* the sequence number expected next by the receiver */
-static int B_nextseqnum;                   /* the sequence number for the next packets sent by B */
+static int expectedseqnum;                 /* the sequence number expected next */
+static int B_nextseqnum;                   /* sequence number for next packet B sends */
 static struct pkt recv_buffer[WINDOWSIZE]; /* buffer for out-of-order packets */
 static bool received[WINDOWSIZE];          /* indicates whether packet is received in window */
 static int B_windowbase;                   /* base of the receiver window */
-static bool already_received[SEQSPACE];    /* track which packets have been received already */
+static bool already_received[SEQSPACE];    /* track which packets have been received for counting */
 
-/* called from layer 3, when a packet arrives for layer 4 at B*/
+/* called from layer 3, when a packet arrives for layer 4 at B */
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
@@ -346,19 +343,20 @@ void B_input(struct pkt packet)
   tolayer3(B, sendpkt);
 }
 
-/* the following routine will be called once (only) before any other */
-/* entity B routines are called. You can use it to do any initialization */
+/* initialization function */
 void B_init(void)
 {
   int i;
+
+  B_windowbase = 0;
   expectedseqnum = 0;
   B_nextseqnum = 1;
-  B_windowbase = 0;
 
   for (i = 0; i < WINDOWSIZE; i++)
   {
     received[i] = false;
   }
+
   for (i = 0; i < SEQSPACE; i++)
   {
     already_received[i] = false;
@@ -372,9 +370,11 @@ void B_init(void)
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
 void B_output(struct msg message)
 {
+  /* Not implemented for simplex transfer */
 }
 
 /* called when B's timer goes off */
 void B_timerinterrupt(void)
 {
+  /* Not implemented for simplex transfer */
 }
