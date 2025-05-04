@@ -175,8 +175,6 @@ void A_input(struct pkt packet)
           if (oldest_unacked != -1)
           {
             starttimer(A, RTT);
-            /*if (TRACE > 1)
-              printf("----A: Started timer for packet %d\n", oldest_unacked);*/
           }
         }
 
@@ -192,11 +190,6 @@ void A_input(struct pkt packet)
         if (TRACE > 0)
           printf("----A: duplicate ACK %d, do nothing!\n", packet.acknum);
       }
-    }
-    else
-    {
-      if (TRACE > 0)
-        printf("----A: ACK %d outside window, do nothing!\n", packet.acknum);
     }
   }
   else
@@ -279,7 +272,10 @@ void B_input(struct pkt packet)
   if (!IsCorrupted(packet))
   {
     if (TRACE > 0)
-      printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
+      printf("----B: packet %d is correctly received\n", packet.seqnum);
+
+    /* Count all correctly received packets, even duplicates */
+    packets_received++;
 
     /* Check if packet falls within the receive window */
     if (((B_windowbase <= (B_windowbase + WINDOWSIZE - 1) % SEQSPACE) &&
@@ -295,10 +291,9 @@ void B_input(struct pkt packet)
         received[index] = true;
         recv_buffer[index] = packet;
 
-        /* Only count a packet once for statistics */
+        /* Track unique packets delivered to application layer */
         if (!already_received[packet.seqnum])
         {
-          packets_received++;
           already_received[packet.seqnum] = true;
         }
 
@@ -326,16 +321,16 @@ void B_input(struct pkt packet)
     {
       /* Packet outside window - must be a duplicate from below the window */
       if (TRACE > 0)
-        /*printf("----B: packet %d outside window, send ACK anyway\n", packet.seqnum);*/
-        sendpkt.acknum = packet.seqnum;
+        printf("----B: packet %d outside window, send ACK anyway\n", packet.seqnum);
+      sendpkt.acknum = packet.seqnum;
     }
   }
   else
   {
     /* Packet is corrupted, do not send ACK */
     if (TRACE > 0)
-      /*printf("----B: packet corrupted, do not send ACK\n");*/
-      return;
+      printf("----B: packet corrupted, do not send ACK\n");
+    return;
   }
 
   /* Create ACK packet */
@@ -349,9 +344,6 @@ void B_input(struct pkt packet)
   /* Compute checksum and send */
   sendpkt.checksum = ComputeChecksum(sendpkt);
   tolayer3(B, sendpkt);
-
-  /*if (TRACE > 0)
-    printf("----B: ACK %d sent\n", sendpkt.acknum);*/
 }
 
 /* the following routine will be called once (only) before any other */
