@@ -282,6 +282,9 @@ void B_input(struct pkt packet)
     if (TRACE > 0)
       printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
 
+    /* Count ALL correctly received packets (even duplicates) */
+    packets_received++;
+
     /* Check if packet falls within the receive window */
     if (((B_windowbase <= (B_windowbase + WINDOWSIZE - 1) % SEQSPACE) &&
          (packet.seqnum >= B_windowbase && packet.seqnum <= (B_windowbase + WINDOWSIZE - 1) % SEQSPACE)) ||
@@ -296,10 +299,9 @@ void B_input(struct pkt packet)
         received[index] = true;
         recv_buffer[index] = packet;
 
-        /* Only count a packet once for statistics */
+        /* Track which packets have been delivered to app layer */
         if (!already_received[packet.seqnum])
         {
-          packets_received++;
           already_received[packet.seqnum] = true;
         }
 
@@ -350,6 +352,9 @@ void B_input(struct pkt packet)
   /* Compute checksum and send */
   sendpkt.checksum = ComputeChecksum(sendpkt);
   tolayer3(B, sendpkt);
+
+  /*if (TRACE > 0)
+    printf("----B: ACK %d sent\n", sendpkt.acknum);*/
 }
 
 /* the following routine will be called once (only) before any other */
