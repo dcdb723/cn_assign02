@@ -216,7 +216,7 @@ void B_input(struct pkt packet)
   if (!IsCorrupted(packet))
   {
     if (TRACE > 0)
-      printf("----B: packet %d is correctly received\n", packet.seqnum);
+      printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
 
     /* Check if packet falls within the receive window */
     if (((B_windowbase <= (B_windowbase + WINDOWSIZE - 1) % SEQSPACE) &&
