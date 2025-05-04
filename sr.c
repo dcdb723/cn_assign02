@@ -59,12 +59,38 @@ static struct pkt buffer[WINDOWSIZE]; /* array for storing packets waiting for A
 static int windowfirst, windowlast;   /* array indexes of the first/last packet awaiting ACK */
 static int windowcount;               /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;              /* the next sequence number to be used by the sender */
+static bool acked[WINDOWSIZE];        /* whether packet has been ACKed */
+static int windowbase;                /* base sequence number of the window */
+static int oldest_unacked;            /* sequence number of the oldest unacked packet */
+
+/* Find the oldest unacknowledged packet to time */
+static void find_oldest_unacked(void)
+{
+  int i;
+  int offset = 0;
+
+  /* Start from the windowbase and find the first unacked packet */
+  while (offset < windowcount)
+  {
+    i = ((windowbase + offset) % SEQSPACE) % WINDOWSIZE;
+    if (!acked[i])
+    {
+      oldest_unacked = (windowbase + offset) % SEQSPACE;
+      return;
+    }
+    offset++;
+  }
+
+  /* If all packets are acked */
+  oldest_unacked = -1;
+}
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
 {
   struct pkt sendpkt;
   int i;
+  int index;
 
   /* if not blocked waiting on ACK */
   if (windowcount < WINDOWSIZE)
@@ -81,8 +107,9 @@ void A_output(struct msg message)
 
     /* put packet in window buffer */
     /* windowlast will always be 0 for alternating bit; but not for GoBackN */
-    windowlast = (windowlast + 1) % WINDOWSIZE;
-    buffer[windowlast] = sendpkt;
+    index = A_nextseqnum % WINDOWSIZE;
+    buffer[index] = sendpkt;
+    acked[index] = false;
     windowcount++;
 
     /* send out packet */
@@ -90,9 +117,12 @@ void A_output(struct msg message)
       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
     tolayer3(A, sendpkt);
 
-    /* start timer if first packet in window */
-    if (windowcount == 1)
+    /* If this is the first unacked packet, start the timer */
+    if (oldest_unacked == -1)
+    {
+      oldest_unacked = A_nextseqnum;
       starttimer(A, RTT);
+    }
 
     /* get next sequence number, wrap back to 0 */
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;
@@ -188,13 +218,16 @@ void A_timerinterrupt(void)
 void A_init(void)
 {
   /* initialise A's window, buffer and sequence number */
+  int i;
   A_nextseqnum = 0; /* A starts with seq num 0, do not change this */
-  windowfirst = 0;
-  windowlast = -1; /* windowlast is where the last packet sent is stored.
-       new packets are placed in winlast + 1
-       so initially this is set to -1
-     */
   windowcount = 0;
+  windowbase = 0;
+  oldest_unacked = -1;
+
+  for (i = 0; i < WINDOWSIZE; i++)
+  {
+    acked[i] = false;
+  }
 }
 
 /********* Receiver (B)  variables and procedures ************/
