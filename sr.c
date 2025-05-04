@@ -226,7 +226,6 @@ void B_input(struct pkt packet)
     {
 
       /* Store packet in the buffer if not already received */
-      // index = seqnum_to_index(packet.seqnum);
       index = packet.seqnum % WINDOWSIZE;
       if (!received[index])
       {
@@ -293,8 +292,9 @@ void B_init(void)
   expectedseqnum = 0;
   B_nextseqnum = 1;
   B_windowbase = 0;
+  int i;
 
-  for (int i = 0; i < WINDOWSIZE; i++)
+  for (i = 0; i < WINDOWSIZE; i++)
   {
     received[i] = false;
   }
