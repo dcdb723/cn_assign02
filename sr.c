@@ -197,19 +197,34 @@ void A_timerinterrupt(void)
 {
   int i;
 
-  if (TRACE > 0)
-    printf("----A: time out,resend packets!\n");
-
-  for (i = 0; i < windowcount; i++)
+  if (oldest_unacked != -1)
   {
+    i = oldest_unacked % WINDOWSIZE;
 
     if (TRACE > 0)
-      printf("---A: resending packet %d\n", (buffer[(windowfirst + i) % WINDOWSIZE]).seqnum);
+      printf("----A: time out,resend packets!\n");
 
-    tolayer3(A, buffer[(windowfirst + i) % WINDOWSIZE]);
-    packets_resent++;
-    if (i == 0)
+    /* Only resend if still within window and not yet ACKed */
+    if (!acked[i])
+    {
+      /* resend just this packet */
+      if (TRACE > 0)
+        printf("---A: resending packet %d\n", oldest_unacked);
+
+      tolayer3(A, buffer[i]);
+      packets_resent++;
+
       starttimer(A, RTT);
+    }
+    else
+    {
+      /* This packet is already ACKed, find next one to time */
+      find_oldest_unacked();
+      if (oldest_unacked != -1)
+      {
+        starttimer(A, RTT);
+      }
+    }
   }
 }
 
