@@ -67,22 +67,19 @@ static int oldest_unacked;            /* sequence number of the oldest unacked p
 static void find_oldest_unacked(void)
 {
   int i;
-  int offset = 0;
+  int seq;
+  oldest_unacked = -1;
 
   /* Start from the windowbase and find the first unacked packet */
-  while (offset < windowcount)
+  for (i = 0; i < windowcount; i++)
   {
-    i = ((windowbase + offset) % SEQSPACE) % WINDOWSIZE;
-    if (!acked[i])
+    seq = (windowbase + i) % SEQSPACE;
+    if (!acked[seq % WINDOWSIZE])
     {
-      oldest_unacked = (windowbase + offset) % SEQSPACE;
+      oldest_unacked = seq;
       return;
     }
-    offset++;
   }
-
-  /* If all packets are acked */
-  oldest_unacked = -1;
 }
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
@@ -252,6 +249,7 @@ static int B_nextseqnum;                   /* the sequence number for the next p
 static struct pkt recv_buffer[WINDOWSIZE]; /* buffer for out-of-order packets */
 static bool received[WINDOWSIZE];          /* indicates whether packet is received in window */
 static int B_windowbase;                   /* base of the receiver window */
+static bool already_received[SEQSPACE];    /* track which packets have been received already */
 
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(struct pkt packet)
@@ -279,7 +277,13 @@ void B_input(struct pkt packet)
       {
         received[index] = true;
         recv_buffer[index] = packet;
-        packets_received++;
+
+        /* Only count a packet once for statistics */
+        if (!already_received[packet.seqnum])
+        {
+          packets_received++;
+          already_received[packet.seqnum] = true;
+        }
 
         /* If this is the base of the window, deliver it and any consecutive buffered packets */
         if (packet.seqnum == B_windowbase)
@@ -345,6 +349,10 @@ void B_init(void)
   for (i = 0; i < WINDOWSIZE; i++)
   {
     received[i] = false;
+  }
+  for (i = 0; i < SEQSPACE; i++)
+  {
+    already_received[i] = false;
   }
 }
 
